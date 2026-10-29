@@ -2,16 +2,18 @@ package http1
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 )
 
 func ListenAndServe(addr string, handler http.Handler) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-
 		return fmt.Errorf("listen: %w", err)
 	}
 	defer func(listener net.Listener) {
@@ -45,22 +47,60 @@ func ListenAndServe(addr string, handler http.Handler) error {
 	}
 }
 
+func handleParsingError(err error, conn net.Conn) error {
+	code := StatusBadRequest
+	var httpError *HTTPError
+	if errors.As(err, &httpError) {
+		code = httpError.Code
+	}
+	writeErr := writeErrorResponseBody(conn, code)
+	if writeErr != nil {
+		return fmt.Errorf("error response write failed: %w", writeErr)
+	}
+	return nil
+}
+
 func HandleConnection(conn net.Conn, mux http.Handler) error {
-
 	reader := bufio.NewReader(conn)
-	req, err := ParseRequest(reader)
-	if err != nil {
 
-		return fmt.Errorf("failed to parse request: %w", err)
+	for {
+		req, err := ParseRequest(reader)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return handleParsingError(err, conn)
+		}
+
+		res := NewResponse(conn, req.Method)
+
+		keepAlive := true
+		if req.ProtoMinor == 0 && strings.ToLower(req.Header.Get("Connection")) != "keep-alive" {
+			keepAlive = false
+		} else if strings.ToLower(req.Header.Get("Connection")) == "close" {
+			keepAlive = false
+		}
+		if !keepAlive {
+			res.SetField("Connection", "close")
+		}
+
+		mux.ServeHTTP(res, req)
+
+		if err := res.Finish(); err != nil {
+			return fmt.Errorf("finish failed: %w", err)
+		}
+		_, err = io.Copy(io.Discard, req.Body)
+		if err != nil {
+			return fmt.Errorf("error while flushing %w", err)
+		}
+		err = req.Body.Close()
+		if err != nil {
+			return fmt.Errorf("error while body closure %w", err)
+		}
+
+		if !keepAlive {
+			break
+		}
 	}
-
-	res := NewResponse(conn)
-	mux.ServeHTTP(res, req)
-
-	//Testing purposes
-	if err := res.Flush(); err != nil {
-		return fmt.Errorf("failed to write response to connection: %w", err)
-	}
-
 	return nil
 }

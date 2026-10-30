@@ -1,0 +1,4 @@
+vtsingle:
+  enabled: true
+  spec:
+    retentionPeriod: "7d"

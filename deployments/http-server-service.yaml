@@ -3,10 +3,13 @@ kind: Service
 metadata:
   name: http-server
   namespace: http-from-scratch
+  labels:
+    app: http-server
 spec:
   selector:
     app: http-server
   ports:
-    - protocol: TCP
+    - name: metrics
+      protocol: TCP
       port: 8080
       targetPort: 8080

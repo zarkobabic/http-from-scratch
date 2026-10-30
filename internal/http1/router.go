@@ -14,6 +14,12 @@ type Router struct {
 	routes map[string]routeRules
 }
 
+type HandlerFunc func(http.ResponseWriter, *http.Request)
+
+func (f HandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f(w, r)
+}
+
 func NotAllowedResponse(w http.ResponseWriter, rule routeRules) {
 	var allowedMethods []string
 	for k := range rule.methodHandlers {
@@ -56,5 +62,15 @@ func (r *Router) HandleFunc(method string, pattern string, f func(w http.Respons
 		rules = routeRules{methodHandlers: methodHandlers}
 		r.routes[pattern] = rules
 	}
-	rules.methodHandlers[method] = http.HandlerFunc(f)
+	rules.methodHandlers[method] = HandlerFunc(f)
+}
+
+func (r *Router) Handle(method string, pattern string, f http.Handler) {
+	rules, ok := r.routes[pattern]
+	if !ok {
+		methodHandlers := make(map[string]http.Handler)
+		rules = routeRules{methodHandlers: methodHandlers}
+		r.routes[pattern] = rules
+	}
+	rules.methodHandlers[method] = f
 }
